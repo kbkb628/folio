@@ -36,7 +36,16 @@ export interface TraceProjectionInput {
   /** Persisted run record (session runs). */
   run?: Pick<
     Run,
-    'id' | 'sessionId' | 'status' | 'input' | 'startedAt' | 'completedAt' | 'answer' | 'error'
+    | 'id'
+    | 'sessionId'
+    | 'status'
+    | 'input'
+    | 'startedAt'
+    | 'completedAt'
+    | 'answer'
+    | 'error'
+    | 'stopReason'
+    | 'stopDetail'
   >;
   /** Transcript truth (session runs). */
   messages?: Message[];
@@ -288,6 +297,10 @@ export function projectTrace(input: TraceProjectionInput): FolioTrace {
             ? 'failed'
             : 'completed'
           : (run?.status ?? 'completed'),
+    // A run a budget or runaway guard cut short is not an ordinary completion
+    // (#17); the reason travels with the trace so the inspector can name it.
+    stopReason: run?.stopReason,
+    stopDetail: run?.stopDetail,
     startedAt,
     completedAt,
     latencyMs,

@@ -447,6 +447,35 @@ describe('RunManager budgets and runaway detection (#17)', () => {
     expect(messages[1]).toMatchObject({ role: 'assistant', content: 'partial two' });
   });
 
+  it('publishes the structured stop on the terminal event, not only on the record', async () => {
+    const { sessions, runs } = makeKernel(
+      async function* (input) {
+        yield event(input.sessionId, input.runId, 'message_completed', { answer: 'partial' }, 1);
+        yield event(input.sessionId, input.runId, 'message_completed', { answer: 'partial again' }, 2);
+        yield event(input.sessionId, input.runId, 'run_completed', { answer: 'finished', toolCalls: [] }, 3);
+      },
+      { budgets: { defaults: { modelCalls: 2 } } }
+    );
+    const session = await sessions.createSession('Structured');
+    const terminal: AgentEvent[] = [];
+    runs.subscribe((agentEvent) => {
+      if (agentEvent.type === 'run_failed') terminal.push(agentEvent);
+    });
+
+    const run = await runs.startRun(session.id, 'long task');
+    await waitFor(async () => !runs.isRunning());
+
+    // The UI must not have to recover the reason by parsing the error message (#17).
+    expect(terminal).toHaveLength(1);
+    expect(terminal[0]).toMatchObject({
+      runId: run.id,
+      payload: {
+        stopReason: 'budget_exhausted',
+        stopDetail: { key: 'modelCalls', limit: 2, used: 2 },
+      },
+    });
+  });
+
   it('lets a run tighten its own budget but clamps it to the system ceiling', async () => {
     const script = async function* (input: AgentRunInput) {
       yield event(input.sessionId, input.runId, 'message_completed', { answer: 'one' }, 1);

@@ -287,6 +287,14 @@ export interface RunCompletedPayload {
 
 export interface RunFailedPayload {
   error: ApiError;
+  /**
+   * Machine-readable reason the run stopped, when a safeguard stopped it (#17).
+   * A guard stop surfaces as `RUN_CANCELLED` on the level below, so the reason
+   * travels with the event instead of being recovered from the error message.
+   */
+  stopReason?: StopReason;
+  /** The numbers behind the stop (which budget ran out, which loop fired). */
+  stopDetail?: Record<string, unknown>;
 }
 
 export type AgentEventPayload =

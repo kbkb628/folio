@@ -1,5 +1,12 @@
 import { atom } from 'jotai';
-import type { AgentEvent, ApiError, Message, ToolCall, WorkspaceContext } from '@finagent/core';
+import type {
+  AgentEvent,
+  ApiError,
+  Message,
+  StopReason,
+  ToolCall,
+  WorkspaceContext,
+} from '@finagent/core';
 import { isRuntimeInfraCode } from '@finagent/core';
 import type { FinagentClient } from '../client';
 import { activeSessionIdAtom, messagesAtomFamily, sessionsAtom } from './sessionAtoms';
@@ -15,6 +22,9 @@ export interface RunView {
    * (Pi process unavailable). The panel shows a dedicated banner instead of a
    * chat message; cleared on the next run. */
   infraError?: ApiError;
+  /** Why a budget or runaway guard stopped this run (#17), when it did. */
+  stopReason?: StopReason;
+  stopDetail?: Record<string, unknown>;
 }
 
 /**
@@ -31,28 +41,82 @@ export interface LastRunSummary {
   completedAt?: number;
   toolCount: number;
   workspaceContext?: WorkspaceContext;
+  /**
+   * Why the run stopped, when a budget or runaway guard cut it short (#17).
+   * Present only when the runtime reported one; the footer explains it instead
+   * of calling a guard stop an ordinary completion.
+   */
+  stopReason?: StopReason;
+  /** The numbers behind the stop: which budget ran out, which loop fired. */
+  stopDetail?: Record<string, unknown>;
 }
 
 export const lastRunSummaryAtom = atom<LastRunSummary | null>(null);
 
 export const runViewAtom = atom<RunView | null>(null);
 
-/** Codes the run-budget guard sets on `run_failed` (#17): a guard stop is not an error. */
-const GUARD_STOP_CODES = new Set(['BUDGET_EXHAUSTED', 'LOOP_DETECTED', 'RETRY_STORM']);
+/** The guard code that stands for each stop reason, on the level below. */
+const guardCodes: ReadonlyArray<{ reason: StopReason; code: string }> = [
+  { reason: 'budget_exhausted', code: 'BUDGET_EXHAUSTED' },
+  { reason: 'loop_detected', code: 'LOOP_DETECTED' },
+  { reason: 'retry_storm', code: 'RETRY_STORM' },
+];
+
+/**
+ * The structured stop reason a terminal event carries (#17), or undefined when
+ * the run failed for an ordinary reason. Older events only carry the error, so
+ * the guard code is read as a fallback.
+ */
+function stopOf(payload: { error: ApiError; stopReason?: StopReason; stopDetail?: Record<string, unknown> }): {
+  stopReason: StopReason;
+  stopDetail?: Record<string, unknown>;
+} | undefined {
+  if (payload.stopReason !== undefined) {
+    return { stopReason: payload.stopReason, stopDetail: payload.stopDetail };
+  }
+  const reason = guardCodes.find((entry) => entry.code === payload.error.code)?.reason;
+  if (reason === undefined) return undefined;
+  return {
+    stopReason: reason,
+    stopDetail: parseGuardDetail(payload.error.message),
+  };
+}
 
 /**
  * One line explaining a guard stop, plus the numbers the runtime attached to it.
  * Returns undefined for ordinary failures, which keep the raw error message.
+ * Accepts the structured stop when the event carries one, and falls back to the
+ * error code and the message-embedded detail for events emitted before #17.
  */
-export function describeGuardStop(error: ApiError): string | undefined {
-  if (!GUARD_STOP_CODES.has(error.code)) return undefined;
-  const reason =
-    error.code === 'BUDGET_EXHAUSTED'
-      ? 'the run budget was used up'
-      : error.code === 'LOOP_DETECTED'
-        ? 'a repeating loop was detected'
-        : 'the run retried too often in a row';
-  return `Stopped early: ${reason}${describeGuardDetail(parseGuardDetail(error.message))}. The messages above are what it completed.`;
+export function describeGuardStop(
+  error: ApiError,
+  stop?: { stopReason: StopReason; stopDetail?: Record<string, unknown> }
+): string | undefined {
+  const reason = stop?.stopReason ?? reasonOfCode(error.code);
+  if (reason === undefined) return undefined;
+  const detail = stop !== undefined ? stop.stopDetail : parseGuardDetail(error.message);
+  return `Stopped early: ${describeStopReason(reason)}${describeGuardDetail(detail)}. The messages above are what it completed.`;
+}
+
+/** The stop reason a guard error code stands for on its own. */
+function reasonOfCode(code: string): StopReason | undefined {
+  return guardCodes.find((entry) => entry.code === code)?.reason;
+}
+
+/** The plain-language reason, used when no translation is at hand. */
+function describeStopReason(reason: StopReason): string {
+  switch (reason) {
+    case 'budget_exhausted':
+      return 'the run budget was used up';
+    case 'loop_detected':
+      return 'a repeating loop was detected';
+    case 'retry_storm':
+      return 'the run retried too often in a row';
+    case 'cancelled':
+      return 'you cancelled it';
+    default:
+      return 'it hit a guard';
+  }
 }
 
 /** The detail JSON the kernel appends to a guard stop message, when it parses. */
@@ -70,7 +134,7 @@ function parseGuardDetail(message: string): Record<string, unknown> | undefined 
 }
 
 /** Render the two shapes a guard detail takes: a budget key, or a repeated signal. */
-function describeGuardDetail(detail: Record<string, unknown> | undefined): string {
+export function describeGuardDetail(detail: Record<string, unknown> | undefined): string {
   if (detail === undefined) return '';
   if (typeof detail.key === 'string') {
     return ` (${detail.key} ${String(detail.used)}/${String(detail.limit)})`;
@@ -195,6 +259,7 @@ export const applyAgentEventAtom = atom(
 
     if (event.type === 'run_failed') {
       const cancelled = event.payload.error.code === 'RUN_CANCELLED';
+      const stop = stopOf(event.payload);
       set(sessionsAtom, (sessions) => sessions.map((session) =>
         session.id === sessionId ? { ...session, status: 'idle' as const } : session
       ));
@@ -214,19 +279,20 @@ export const applyAgentEventAtom = atom(
           toolCount: run.toolCalls.length,
           workspaceContext: previous?.workspaceContext,
         }));
-        set(runViewAtom, { ...run, infraError: error });
+        set(runViewAtom, { ...run, infraError: error, ...stop });
         return;
       }
 
-      const guardStop = describeGuardStop(error);
+      const guardStop = describeGuardStop(error, stop);
       const assistantMessage: Message = {
         id: `assistant-${event.runId}`,
         role: 'assistant',
-        content: cancelled
-          ? (run.answer || '(run stopped)')
-          : guardStop === undefined
-            ? `Error: ${error.message}`
-            : [run.answer, guardStop].filter((part) => part !== '').join('\n\n'),
+        content:
+          guardStop !== undefined
+            ? [run.answer, guardStop].filter((part) => part !== '').join('\n\n')
+            : cancelled
+              ? (run.answer || '(run stopped)')
+              : `Error: ${error.message}`,
         timestamp: event.timestamp,
         toolCalls: run.toolCalls.map((toolCall) => ({
           id: toolCall.id,
@@ -253,6 +319,7 @@ export const applyAgentEventAtom = atom(
         completedAt: event.timestamp,
         toolCount: run.toolCalls.length,
         workspaceContext: previous?.workspaceContext,
+        ...stop,
       }));
       set(runViewAtom, null);
       return;

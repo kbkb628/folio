@@ -9,6 +9,7 @@ import {
   agentPanelVisibleAtom,
   cancelRunAtom,
   createSessionAtom,
+  describeGuardDetail,
   lastRunSummaryAtom,
   loadMessagesAtom,
   navSectionAtom,
@@ -391,17 +392,34 @@ const RunFooter: React.FC<{
       ? Math.max(0, Math.round((lastRun.completedAt - lastRun.startedAt) / 100) / 10)
       : undefined;
   const failed = lastRun.status === 'failed';
+  const stopped = lastRun.status === 'cancelled' && lastRun.stopReason !== undefined;
+  // A guard stop is not a completion (#17): name the reason and the number that
+  // ran out, so the footer explains the short answer instead of hiding it.
   const summary = failed
     ? t('trace.footer.failed', { tools: lastRun.toolCount })
-    : t('trace.footer.completed', { seconds: durationSec ?? 0, steps: lastRun.toolCount });
+    : stopped
+      ? t('trace.footer.stopped', {
+          reason: t(`trace.stopReason.${lastRun.stopReason}`),
+          steps: lastRun.toolCount,
+          detail: describeGuardDetail(lastRun.stopDetail),
+        })
+      : t('trace.footer.completed', { seconds: durationSec ?? 0, steps: lastRun.toolCount });
   return (
     <div
       data-testid="run-footer"
       className={`flex items-center justify-between gap-2 rounded-[10px] border px-3 py-2 ${
-        failed ? 'border-destructive/24 bg-destructive/5' : 'border-border bg-surface-muted'
+        failed
+          ? 'border-destructive/24 bg-destructive/5'
+          : stopped
+            ? 'border-warning/30 bg-warning/6'
+            : 'border-border bg-surface-muted'
       }`}
     >
-      <span className={`text-[11px] ${failed ? 'text-negative' : 'text-foreground/60'}`}>{summary}</span>
+      <span
+        className={`text-[11px] ${failed ? 'text-negative' : stopped ? 'text-warning' : 'text-foreground/60'}`}
+      >
+        {summary}
+      </span>
       <button
         type="button"
         onClick={onOpenTrace}

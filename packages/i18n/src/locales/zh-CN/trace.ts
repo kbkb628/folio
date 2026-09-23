@@ -13,6 +13,15 @@ export const trace = {
   status: {
     success: '成功',
     error: '失败',
+    cancelled: '提前中止',
+  },
+  /** 预算/循环护栏中止原因（#17），展示在追踪状态行。 */
+  stopReason: {
+    budget_exhausted: '预算用尽',
+    loop_detected: '检测到循环',
+    retry_storm: '重试风暴',
+    cancelled: '已取消',
+    error: '错误',
   },
   completeness: {
     complete: '完整',
@@ -86,6 +95,8 @@ export const trace = {
   footer: {
     completed: '已完成 · {{seconds}} 秒 · {{steps}} 个步骤',
     failed: '失败 · {{tools}} 个工具',
+    /** 护栏中止不等于完成：直接说明原因（#17）。 */
+    stopped: '提前中止 · {{reason}} · {{steps}} 个步骤{{detail}}',
     trace: '追踪',
   },
 } satisfies SameKeysAs<typeof enTrace>;

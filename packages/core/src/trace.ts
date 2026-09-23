@@ -6,6 +6,7 @@
 // reconstructs historical context from current renderer atoms. Sources are
 // listed explicitly so the inspector can represent incompleteness honestly.
 import type { TraceReference } from './evaluation.ts';
+import type { StopReason } from './index.ts';
 import type { SupportedLocale } from './locale.ts';
 
 /** How complete the recorded evidence for a run is (spec §4). */
@@ -91,6 +92,10 @@ export interface FolioTrace {
   runId: string;
   sessionId?: string;
   status: 'completed' | 'failed' | 'cancelled' | 'running';
+  /** Why a budget or runaway guard stopped the run (#17), when one did. */
+  stopReason?: StopReason;
+  /** The numbers behind that stop: which budget ran out, which loop fired. */
+  stopDetail?: Record<string, unknown>;
   startedAt: number;
   completedAt?: number;
   latencyMs?: number;

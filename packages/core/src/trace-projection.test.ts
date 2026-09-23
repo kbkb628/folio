@@ -224,4 +224,21 @@ describe('projectTrace (V9.1)', () => {
     const toolStep = trace.steps.find((s) => s.kind === 'tool' && s.tool?.id === 'live-run');
     expect(toolStep?.status).toBe('running');
   });
+
+  it('carries the guard stop reason and its numbers onto the trace (#17)', () => {
+    const trace = projectTrace(
+      inputWith({
+        run: {
+          ...baseRun,
+          status: 'cancelled',
+          stopReason: 'budget_exhausted',
+          stopDetail: { key: 'modelCalls', limit: 1, used: 1 },
+        },
+      })
+    );
+
+    expect(trace.status).toBe('cancelled');
+    expect(trace.stopReason).toBe('budget_exhausted');
+    expect(trace.stopDetail).toEqual({ key: 'modelCalls', limit: 1, used: 1 });
+  });
 });

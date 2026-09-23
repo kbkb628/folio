@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Check, ChevronDown, Circle, ExternalLink, LoaderCircle, X } from 'lucide-react';
 import type { FolioTrace, TraceContextField, TraceStep } from '@finagent/core';
+import { describeGuardDetail } from '../../atoms';
 import {
   semanticCompletenessLabelKey,
   semanticContextSourceLabelKey,
@@ -12,6 +13,17 @@ import {
 import { Dialog } from '../primitives/Dialog';
 
 type TraceTab = 'overview' | 'timeline' | 'context' | 'details';
+
+/**
+ * The status word for a trace. A cancelled run is neither a success nor a
+ * failure: a budget or runaway guard cut it short (#17), so it reads as stopped.
+ */
+function traceStatusLabel(trace: FolioTrace, t: (key: string) => string): string {
+  if (trace.status === 'running') return t('agent.tool.statusRunning');
+  if (trace.status === 'failed') return t('trace.status.error');
+  if (trace.status === 'cancelled') return t('trace.status.cancelled');
+  return t('trace.status.success');
+}
 
 const TAB_KEYS: Array<{ id: TraceTab; labelKey: string }> = [
   { id: 'overview', labelKey: 'trace.tabs.overview' },
@@ -120,11 +132,16 @@ export const TraceInspector: React.FC<{
 
         {/* Status row */}
         <div className="flex flex-wrap items-center gap-2 text-[11.5px]">
-          <span className="font-medium text-foreground">
-            {trace.status === 'running'
-              ? t('agent.tool.statusRunning')
-              : t(`trace.status.${trace.status === 'failed' ? 'error' : 'success'}`)}
-          </span>
+          <span className="font-medium text-foreground">{traceStatusLabel(trace, t)}</span>
+          {trace.status === 'cancelled' && trace.stopReason !== undefined && (
+            <span
+              className="rounded-full border border-warning/30 bg-warning/6 px-2 py-0.5 font-medium text-warning"
+              data-testid="trace-stop-reason"
+            >
+              {t(`trace.stopReason.${trace.stopReason}`)}
+              {describeGuardDetail(trace.stopDetail)}
+            </span>
+          )}
           <span className="text-foreground/30">·</span>
           <span className="rounded-full border border-border bg-surface-muted px-2 py-0.5 font-medium text-foreground/60">
             {t(semanticCompletenessLabelKey(trace.completeness))}

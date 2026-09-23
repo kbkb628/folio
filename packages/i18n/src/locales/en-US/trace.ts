@@ -16,6 +16,15 @@ export const trace = {
   status: {
     success: 'Success',
     error: 'Failed',
+    cancelled: 'Stopped early',
+  },
+  /** Why a safeguard cut a run short (#17). Shown in the trace status row. */
+  stopReason: {
+    budget_exhausted: 'Budget used up',
+    loop_detected: 'Loop detected',
+    retry_storm: 'Retry storm',
+    cancelled: 'Cancelled',
+    error: 'Error',
   },
   completeness: {
     complete: 'Complete',
@@ -89,6 +98,8 @@ export const trace = {
   footer: {
     completed: 'Completed · {{seconds}}s · {{steps}} steps',
     failed: 'Failed · {{tools}} tools',
+    /** A guard stop is not a completion: name the reason instead (#17). */
+    stopped: 'Stopped early · {{reason}} · {{steps}} steps{{detail}}',
     trace: 'Trace',
   },
 } satisfies NamespaceResource;

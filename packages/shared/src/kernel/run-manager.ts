@@ -415,7 +415,7 @@ export class RunManager {
     // （sequence 续排、messageId 不丢），activeRun 解锁不影响。
     if (!sawTerminal) {
       if (stop !== undefined) {
-        this.emitRunEvent(run, protocol, 'run_failed', { error: stopError(stop) });
+        this.emitRunEvent(run, protocol, 'run_failed', stopPayload(stop));
       } else if (cancelled) {
         this.emitRunEvent(run, protocol, 'run_failed', {
           error: { code: 'RUN_CANCELLED', message: 'Run cancelled by user.' },
@@ -616,6 +616,16 @@ function stopError(stop: RunStop): ApiError {
         : 'LOOP_DETECTED';
   const detail = stop.detail === undefined ? '' : ` ${JSON.stringify(stop.detail)}`;
   return { code, message: `Run stopped: ${stop.stopReason}.${detail}` };
+}
+
+/**
+ * The terminal payload for a guard stop: the error code keeps the level below
+ * working, while `stopReason` / `stopDetail` carry the structured reason the UI
+ * renders. `RunFailedPayload` is the only payload that owns an `error`, so this
+ * is the one place the two representations are paired.
+ */
+function stopPayload(stop: RunStop): Extract<AgentEventPayload, { error: ApiError }> {
+  return { error: stopError(stop), stopReason: stop.stopReason, stopDetail: stop.detail };
 }
 
 function toRecord(toolCall: ToolCall): ToolCallRecord {

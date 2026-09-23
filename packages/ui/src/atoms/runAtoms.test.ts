@@ -5,7 +5,7 @@ import {
   activeSessionIdAtom,
   messagesAtomFamily,
 } from './sessionAtoms';
-import { applyAgentEventAtom, runViewAtom } from './runAtoms';
+import { applyAgentEventAtom, lastRunSummaryAtom, runViewAtom } from './runAtoms';
 
 function runStarted(sessionId: string): AgentEvent {
   return {
@@ -67,7 +67,12 @@ function answered(sessionId: string, answer: string): AgentEvent {
   } as unknown as AgentEvent;
 }
 
-function runStopped(sessionId: string, code: string, message: string): AgentEvent {
+function runStopped(
+  sessionId: string,
+  code: string,
+  message: string,
+  stop?: { stopReason: string; stopDetail?: Record<string, unknown> }
+): AgentEvent {
   return {
     id: `event-failed-${sessionId}`,
     sessionId,
@@ -75,7 +80,7 @@ function runStopped(sessionId: string, code: string, message: string): AgentEven
     timestamp: 9,
     sequence: 9,
     type: 'run_failed',
-    payload: { error: { code, message } },
+    payload: { error: { code, message }, ...stop },
   } as unknown as AgentEvent;
 }
 
@@ -133,5 +138,42 @@ describe('guard stops read like a stop, not like an error (#17)', () => {
     store.set(applyAgentEventAtom, runStopped('visible-session', 'TOOL_ERROR', 'get_quote failed'));
 
     expect(lastAssistantContent(store, 'visible-session')).toBe('Error: get_quote failed');
+  });
+
+  it('records the structured stop on the run summary, not just in the message', () => {
+    const store = createStore();
+    store.set(activeSessionIdAtom, 'visible-session');
+    store.set(applyAgentEventAtom, runStarted('visible-session'));
+    store.set(
+      applyAgentEventAtom,
+      runStopped('visible-session', 'RUN_CANCELLED', 'Run cancelled by user.', {
+        stopReason: 'budget_exhausted',
+        stopDetail: { key: 'modelCalls', limit: 1, used: 1 },
+      })
+    );
+
+    const summary = store.get(lastRunSummaryAtom);
+    expect(summary?.status).toBe('cancelled');
+    expect(summary?.stopReason).toBe('budget_exhausted');
+    expect(summary?.stopDetail).toEqual({ key: 'modelCalls', limit: 1, used: 1 });
+  });
+
+  it('explains a guard stop from the structured payload alone', () => {
+    const store = createStore();
+    store.set(activeSessionIdAtom, 'visible-session');
+    store.set(applyAgentEventAtom, runStarted('visible-session'));
+    // No detail in the message: the reason and numbers ride on the payload (#17).
+    store.set(
+      applyAgentEventAtom,
+      runStopped('visible-session', 'RUN_CANCELLED', 'Run cancelled by the run budget guard.', {
+        stopReason: 'budget_exhausted',
+        stopDetail: { key: 'modelCalls', limit: 2, used: 2 },
+      })
+    );
+
+    const content = lastAssistantContent(store, 'visible-session');
+    expect(content).toContain('budget');
+    expect(content).toContain('modelCalls 2/2');
+    expect(content.startsWith('Error:')).toBe(false);
   });
 });
